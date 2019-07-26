@@ -1,0 +1,798 @@
+%%
+Module
+        Name = "policy_management_module"
+        Global procedure policy_management_update(number,
+                                                  number,
+                                                  number,
+                                                  string,
+                                                  number,
+                                                  number,
+                                                  string,
+                                                  string,
+                                                  string,
+                                                  string)
+        Global string function get_transaction_type(number)
+        Global string function Get_converted_status(number,number)
+        Global procedure delete_all_copies_from_policy_mgt(number,number,number)
+        global procedure print_to_policy_management_system(string,string,string,string)
+        global Procedure prepare_and_run_invoice_process(number,number,number,number,string,string)  --took lob-code out.
+        string function read_arsbilling(number, number, number)
+        global number function get_numeric_state_from_abbreviation(number,number,number)  --policy_no pol_year end_sequence
+
+        --this program is in the library cslink rv /data/axis_test/lib770_1a/policy_management_lib policy_management_module
+
+procedure definition
+
+string function Get_converted_status(number p_policy_no,
+                                     number p_pol_year)
+
+BEGIN
+  string L_policy_converted[1] = "";
+  access sfppoint,
+     set sfppoint:policy_no    = p_policy_no,
+         sfppoint:pol_year     = p_pol_year, exact
+
+  if sfppoint:policy_no    = p_policy_no and
+     sfppoint:pol_year     = p_pol_year then
+    {
+      L_policy_converted = sfppoint:converted
+    }
+  else
+    {
+      L_policy_converted = "N"
+    }
+  return L_policy_converted
+END
+
+string function get_transaction_type(number p_trans_code)
+
+BEGIN
+  string l_transaction_type[35];
+  string l_enter[1];
+
+  switch(p_trans_code)
+    case 10 : l_transaction_type = "New Business"
+    case 11 : l_transaction_type = "Cancellations"
+    case 12,13,15 : l_transaction_type = "Endorsements"
+    case 14 : l_transaction_type = "Renewals"
+    case 16 : l_transaction_type = "Reinstatements"
+  end
+  write("%c%s%x",02001,"p_trans_code-->",p_trans_code)
+  write("%c%s%s",03001,"l_transaction_type-->",l_transaction_type)
+  Read (23,1,"Press Enter to Continue ",L_ENTER,1)
+  return l_transaction_type
+END
+
+string function get_policy_management_file_name(string p_transaction_type, string p_copy_name)    --"New Business","Renewals","Endorsements","Cancellations","Reinstatements","Invoices", "Non-Pay Notices", "Non-Pay Reinstatement",
+                                               --"Cancellation Balance Due", “NOTICE OF CANCELLATION OR NONREN"",REINSTATEMENT NOTICE OF CANCELLATION/NONRENEW"AL
+
+begin
+  local unsigned ascii number Policy_management_csexec_number[12];
+  local string l_transaction_file_name[50];
+  local string L_local_policy_management_copy[50];
+  Include "sfscsexec.var"
+
+  I_CSEXEC_APPLICATION = "PRINT                    "
+  i_csexec_add         = "Y"
+
+  Access SFSCSEXEC,
+     Set SFSCSEXEC:APPLICATION = I_CSEXEC_APPLICATION, Generic
+
+  If I_CSEXEC_ADD = "Y" Then
+    {
+      Change SFSCSEXEC
+        Begin
+          policy_management_CSEXEC_NUMBER = SFSCSEXEC:APPLICATION_NUMBER + 1
+          SFSCSEXEC:APPLICATION_NUMBER = policy_management_CSEXEC_NUMBER
+        End
+    }
+
+  switch (trun(p_transaction_type))
+    case "Invoices"                 : L_transaction_file_name = "invoice"
+    case "Non-Pay Notices"          : l_transaction_file_name = "nonpay_notice"
+    case "Non-Pay Reinstatements"   : L_transaction_file_name = "reinstatement_notice"
+    case "Cancellation Balance Due" : L_transaction_file_name = "cancellation_balance_due"
+    case "New Business"             : L_transaction_file_name = "new_business"
+    case "Renewals"                 : L_transaction_file_name = "renewal"
+    case "Endorsements"             : L_transaction_file_name = "endorsement"
+    case "Cancellations"            : L_transaction_file_name = "cancellation"
+    case "Reinstatements"           : L_transaction_file_name = "reinstatement"
+    case "Notice Of Cancellation Or Nonrenewal" : L_transaction_file_name = "uw_cancel_nonrenewal"
+    case "Reinstatement Notice Of Cancellation/Nonrenewal" : L_transaction_file_name = "uw_reinstate_notice"
+  end
+
+  if trim(p_copy_name) Not one of "" then    --mean that it is a policy that is being printed.  other will have copyname blank
+    {
+      switch (p_COPY_NAME)
+        case "Agent Copy","Agents Copy" : begin
+                                            L_local_policy_management_copy = lowercase(trun(l_transaction_file_name)) + "_producer_"  + str(todaysdate,"YYYYMMDD") + "_" + str(policy_management_CSEXEC_NUMBER)+ ".pdf"
+                                          end
+        case "Original" : begin
+                            L_local_policy_management_copy = lowercase(trun(l_transaction_file_name)) + "_insured_" + str(todaysdate,"YYYYMMDD")+ "_" + str(policy_management_CSEXEC_NUMBER)+".pdf"
+                          end
+        case "Copy" : begin
+                        L_local_policy_management_copy = lowercase(trun(l_transaction_file_name)) + "_mortgagee_" + str(todaysdate,"YYYYMMDD")+ "_" + str(policy_management_CSEXEC_NUMBER)+".pdf"
+                      end
+      end
+    }
+  else
+    {
+      L_local_policy_management_copy = lowercase(trun(l_transaction_file_name)) + "_" + str(todaysdate,"YYYYMMDD")+ "_" +Str(policy_management_CSEXEC_NUMBER)+".pdf"
+    }
+  return L_local_policy_management_copy
+end
+
+procedure policy_management_update(number p_policy_no,
+                                   number p_pol_year,
+                                   number p_end_sequence,
+                                   string p_company_id,
+                                   number p_agent_no,
+                                   number p_line_of_business,
+                                   string p_transaction_type,    --"New Business","Renewals","Endorsements","Cancellations","Reinstatements","Invoices", "Non-Pay Notices", "Non-Pay Reinstatement",
+                                                                 --"Cancellation Balance Due", “NOTICE OF CANCELLATION OR NONREN"",REINSTATEMENT NOTICE OF CANCELLATION/NONRENEW"AL
+                                   string p_document_name,
+                                   string p_action_type,
+                                   string p_copy_name)
+
+begin
+ local file sfpname_policy = alias for sfpname;
+ local file sfpmaster_policy = alias for sfpmaster;
+ local file policy_management_system = alias for policy_management;
+ local file sfsagent_policy = alias for sfsagent;
+ local file sfsstate_policy = alias for sfsstate;
+
+ local unsigned ascii number l_policy_manage_policy_no[9];
+ local unsigned ascii number l_policy_manage_pol_year[4];
+ local unsigned ascii number l_policy_manage_end_sequence[4];
+
+ local unsigned ascii number l_state[2],
+                             l_sub_code[4],
+                             l_copy_exist[1];
+ local string L_policy_management_copy_pdf[50],
+              l_file_to_delete[150],
+              l_enter[1],
+              l_transaction_file_name[50],
+              l_company_id[10];
+
+ Include "sfscsexec.var"
+ Include "sfsrevname.var"
+
+ l_policy_manage_policy_no    = p_policy_no
+ l_policy_manage_pol_year     = p_pol_year
+ l_policy_manage_end_sequence = p_end_sequence
+ l_company_id                 = p_company_id
+
+ if p_copy_name one of "Original" then
+   {
+     do "policy_management_lib".prepare_and_run_invoice_process(p_policy_no,
+                                                                p_pol_year,
+                                                                p_end_sequence,
+                                                                p_line_of_business,
+                                                                p_copy_name,
+                                                                p_document_name)
+   }
+
+  write("%c<014>%s%x",01001,"p_line_of_business       -->",p_line_of_business)
+  write("%c<014>%s%x",01001,"L_copy_name              -->",p_copy_name)
+  write("%c<014>%s%x",01001,"L_policy_management_copy -->",p_document_name)
+  Read (23,1,"Press Enter to Continue ",L_ENTER,1)
+
+
+ L_policy_management_copy_pdf = get_policy_management_file_name(p_transaction_type,p_copy_name)  --gets the name for each of that goes into the portal
+
+ access policy_manage_setup,
+    set policy_manage_setup:COMPANY_ID = l_company_id, exact
+
+ Access SFPNAME_policy,
+    Set SFPNAME_policy:POLICY_NO    = P_POLICY_NO,
+        SFPNAME_policy:POL_YEAR     = P_POL_YEAR,
+        SFPNAME_policy:END_SEQUENCE = P_END_SEQUENCE, exact
+
+
+--this will move the invoices and the dec page into a pdf file.
+ proc ("cli pcl2pdf -letter -csize -ra %s %s%s -load:ggunder.bin -pages",
+                                                   trim(p_document_name),
+                                                   trim(policy_manage_setup:doc_location_directory),
+                                                   trim(L_policy_management_copy_pdf))
+
+ write("%c<014>%s%s",01001,"L_policy_management_copy-->",p_document_name)
+ write("%c%s%s",02001,"L_policy_management_copy-->",L_policy_management_copy_pdf )
+ write("%c%s%s",03001,"policy_manage_setup:doc_location_directory-->",policy_manage_setup:doc_location_directory )
+ write("%c%s%s",04001,"file location and name-->",trim(policy_manage_setup:doc_location_directory)+trun(L_policy_management_copy_pdf) )
+ write("%c%s%s",05001,"current directory-->",trim(currentdir))
+ proc("cli cqcsfind policy_management.dat")
+ Read (23,1,"Press Enter to Continue ",L_ENTER,1)
+
+ I_NAME=SFPNAME_policy:NAME[1]
+
+ access sfscompany,
+    set sfscompany:company_id = p_company_id, exact
+
+ Include "sfsrevname7.pro"
+
+ access sfsagent_policy,
+    set sfsagent_policy:company_id            = l_company_id,
+        sfsagent_policy:agent_no              = p_agent_no, exact
+
+ l_state = get_numeric_state_from_abbreviation(p_policy_no,p_pol_year,p_end_sequence)
+
+ access sfsstate_policy,
+    set sfsstate_policy:company_id     = l_company_id,
+        sfsstate_policy:state          = l_state,
+        sfsstate_policy:county         = 000, exact
+
+ l_sub_code = 0
+
+ if trun(p_transaction_type) one of "New Business","Renewals","Endorsements","Cancellations","Reinstatements" then
+   {
+     --to check to see if the policy_no pol_year and end_sequence exist  if it does I want to overwrite the one that is out there with the current print job
+
+     access policy_management_system,
+        set policy_management_system:policy_no    = p_policy_no,
+            policy_management_system:pol_year     = p_pol_year,
+            policy_management_system:end_sequence = p_end_sequence, generic
+
+     while policy_management_system:policy_no    = p_policy_no and
+           policy_management_system:pol_year     = p_pol_year and
+           policy_management_system:end_sequence = p_end_sequence
+       {
+--do not add back in invoice affect this if they were run.  if trim(policy_management_system:transaction_type) one of "New Business","Renewals","Endorsements","Cancellations","Reinstatements" then  --policy printed.
+           {
+             l_sub_code = policy_management_system:sub_code      -- find current l_sub_code and set it to what is already existing
+           }
+         next policy_management_system
+       }
+
+     l_sub_code = l_sub_code + 1
+
+     write("%c<014>policy_management_system:policy_no-->%x<--",01001,p_policy_no)
+     write("%cpolicy_management_system:pol_year      -->%x<--",02001,p_pol_year)
+     write("%cpolicy_management_system:end_sequence  -->%x<--",03001,p_end_sequence)
+     write("%cp_transaction_type                     -->%x<--",04001,p_transaction_type)
+     write("%cl_sub_code                             -->%x<--",05001,l_sub_code)
+     read(10,1,"press enter to continue",l_enter,1)
+
+     access policy_management_system,
+        set policy_management_system:policy_no    = p_policy_no,
+            policy_management_system:pol_year     = p_pol_year,
+            policy_management_system:end_sequence = p_end_sequence,
+            policy_management_system:sub_code     = l_sub_code, exact
+
+     if policy_management_system:policy_no    <> p_policy_no or
+        policy_management_system:pol_year     <> p_pol_year or
+        policy_management_system:end_sequence <> p_end_sequence or
+        policy_management_system:sub_code     <> l_sub_code then
+       {
+          write("%c<014>Adding to inside policy_management_system:policy_no-->%x<--",01001,p_policy_no)
+          write("%cpolicy_management_system:pol_year      -->%x<--",02001,p_pol_year)
+          write("%cpolicy_management_system:end_sequence  -->%x<--",03001,p_end_sequence)
+          write("%cp_transaction_type                     -->%x<--",04001,p_transaction_type)
+          write("%cdocumenet_name                         -->%x<--",05001,L_policy_management_copy_pdf)
+          write("%cl_sub_code                             -->%x<--",06001,l_sub_code)
+
+         read(10,1,"press enter to continue",l_enter,1)
+
+         add policy_management_system
+           begin
+             policy_management_system:policy_no          = p_policy_no
+             policy_management_system:pol_year           = p_pol_year
+             policy_management_system:end_sequence       = p_end_sequence
+             policy_management_system:sub_code           = l_sub_code
+             policy_management_system:agent_master_code  = sfsagent_policy:agent_master_code
+             policy_management_system:agent_no           = p_agent_no
+             policy_management_system:line_of_business   = p_line_of_business
+             policy_management_system:transaction_type   = p_transaction_type
+             policy_management_system:run_date           = todaysdate
+             policy_management_system:eff_date           = SFPNAME_policy:eff_date
+             policy_management_system:policy_exp_date    = SFPNAME_policy:exp_date
+             policy_management_system:state_name         = sfsstate_policy:description
+             policy_management_system:search_name        = i_rev_name
+             policy_management_system:action_type        = p_action_type
+             policy_management_system:TRANS_CODE         = sfpname_policy:trans_code
+             policy_management_system:document_name      = L_policy_management_copy_pdf
+             policy_management_system:copy_name          = p_copy_name
+          END
+       }
+   }
+ else   -- Transaction Type = "Invoices", "Non-Pay Notices", "Non-Pay Reinstatements", "Cancellation Balance Due"
+   {
+     l_sub_code = 0
+     access policy_management_system,
+        set policy_management_system:policy_no    = p_policy_no,
+            policy_management_system:pol_year     = p_pol_year,
+            policy_management_system:end_sequence = p_end_sequence, generic
+
+     while policy_management_system:policy_no    = p_policy_no and
+           policy_management_system:pol_year     = p_pol_year and
+           policy_management_system:end_sequence = p_end_sequence
+       {
+         if trun(policy_management_system:transaction_type) one of "Invoices", "Non-Pay Notices", "Non-Pay Reinstatements", "Cancellation Balance Due",
+                                                                   "Notice Of Cancellation Or Nonrenewal","Reinstatement Notice Of Cancellation/Nonrenewal"  then
+           {
+             l_sub_code = policy_management_system:sub_code      -- find current l_sub_code and set it to what is already existing
+           }
+         next policy_management_system
+       }
+
+     l_sub_code = l_sub_code + 1
+
+     access policy_management_system,
+        set policy_management_system:policy_no    = p_policy_no,
+            policy_management_system:pol_year     = p_pol_year,
+            policy_management_system:end_sequence = p_end_sequence,
+            policy_management_system:sub_code     = l_sub_code, exact
+
+     if policy_management_system:policy_no    <> p_policy_no or
+        policy_management_system:pol_year     <> p_pol_year or
+        policy_management_system:end_sequence <> p_end_sequence or
+        policy_management_system:sub_code     <> l_sub_code then
+      {
+        add policy_management_system
+          begin
+            policy_management_system:policy_no          = p_policy_no
+            policy_management_system:pol_year           = p_pol_year
+            policy_management_system:end_sequence       = p_end_sequence
+            policy_management_system:sub_code           = l_sub_code
+            policy_management_system:agent_master_code  = sfsagent_policy:agent_master_code
+            policy_management_system:agent_no           = p_agent_no
+            policy_management_system:line_of_business   = p_line_of_business
+            policy_management_system:transaction_type   = p_transaction_type
+            policy_management_system:run_date           = todaysdate
+            policy_management_system:eff_date           = SFPNAME_policy:eff_date
+            policy_management_system:policy_exp_date    = SFPNAME_policy:exp_date
+            policy_management_system:state_name         = sfsstate_policy:description
+            policy_management_system:search_name        = i_rev_name
+            policy_management_system:action_type        = p_action_type
+            policy_management_system:document_name      = L_policy_management_copy_pdf
+         END
+      }
+ /*   else
+      {
+        change policy_management_system
+          begin
+            policy_management_system:agent_master_code  = sfsagent_policy:agent_master_code
+            policy_management_system:agent_no           = p_agent_no
+            policy_management_system:line_of_business   = p_line_of_business
+            policy_management_system:transaction_type   = p_transaction_type
+            policy_management_system:run_date           = todaysdate
+            policy_management_system:eff_date           = SFPNAME_policy:eff_date
+            policy_management_system:policy_exp_date    = SFPNAME_policy:exp_date
+            policy_management_system:state_name         = sfsstate_policy:description
+            policy_management_system:search_name        = i_rev_name
+            policy_management_system:action_type        = p_action_type
+            policy_management_system:document_name      = L_policy_management_copy_pdf
+         END
+      }
+*/
+   }
+END
+
+procedure delete_all_copies_from_policy_mgt(number p_policy_no,
+                                            number p_pol_year,
+                                            number p_end_sequence)
+
+
+--used to delete all copied of a printed policy from policy management system
+--this will be called before you call the updated policy_management_update which adds the policy to the policy management system
+
+BEGIN
+  local file policy_management_system = alias for policy_management;
+  string l_file_to_delete[150];
+
+  access policy_management_system,
+     set policy_management_system:policy_no    = p_policy_no,
+         policy_management_system:pol_year     = p_pol_year,
+         policy_management_system:end_sequence = p_end_sequence, generic
+
+  while policy_management_system:policy_no    = p_policy_no and
+        policy_management_system:pol_year     = p_pol_year and
+        policy_management_system:end_sequence = p_end_sequence
+    {
+      --make sure only policy records get removed
+      if trim(policy_management_system:transaction_type) one of "New Business","Renewals","Endorsements","Cancellations","Reinstatements" then  --policy printed.  invoices need to be removed
+        {
+          l_file_to_delete = trun(policy_manage_setup:doc_location_directory)+trun(policy_management_system:document_name)
+          if whichfile(l_file_to_delete) <> "" then   --means it found it so I can delete it.
+            {
+              deletefile(trun(l_file_to_delete))
+            }
+          delete policy_management_system   --delete the database record
+        }
+      next policy_management_system
+    }
+END
+
+procedure prepare_and_run_invoice_process(number p_policy_no,
+                                          number p_year,
+                                          number p_end_sequence,
+                                          number p_line_of_business,
+                                          string p_copy_name,
+                                          string p_policy_management_dec_copy)
+
+Begin
+  string l_local_company_id[10];
+  string l_enter[1];
+  unsigned ascii number l_local_state[2];
+  write("%c<014>starting prepare_and_run_invoice_process-->%x<--",01001,p_policy_no)
+  write("%cpol_year      -->%x<--",02001,p_year)
+  write("%cend_sequence  -->%x<--",03001,p_end_sequence)
+  write("%cp_copy_name   -->%x<--",04001,p_end_sequence)
+  write("%cp_policy_management_dec_copy  -->%x<--",05001,p_policy_management_dec_copy)
+  Read (23,1,"Press Enter to Continue ",L_ENTER,1)
+
+  Access SFPNAME_alias,
+     Set SFPNAME_alias:POLICY_NO    = p_POLICY_NO,
+         SFPNAME_alias:POL_YEAR     = p_YEAR,
+         SFPNAME_alias:END_SEQUENCE = p_END_SEQUENCE, exact
+
+  Access SFPmaster_alias,
+     Set SFPmaster_alias:POLICY_NO    = p_POLICY_NO,
+         SFPmaster_alias:POL_YEAR     = p_YEAR,
+         SFPmaster_alias:END_SEQUENCE = p_END_SEQUENCE, exact
+
+  l_local_company_id = sfpname_alias:company_id
+  Access SFSLINE_alias,
+     Set SFSLINE_alias:COMPANY_ID       = l_local_COMPANY_ID,
+         SFSLINE_alias:LINE_OF_BUSINESS = p_LINE_OF_BUSINESS,
+         SFSLINE_alias:LOB_SUBLINE      = "00", Exact
+
+/*  Access BOPGENERAL_alias,
+     Set BOPGENERAL_alias:POLICY_NO    = p_POLICY_NO,
+         BOPGENERAL_alias:POL_YEAR     = p_YEAR,
+         BOPGENERAL_alias:END_SEQUENCE = p_END_SEQUENCE, Generic
+*/
+
+  l_local_state = get_numeric_state_from_abbreviation(p_policy_no,p_year,p_end_sequence)
+
+/*  Access SCIPSCONTROL_alias,
+     Set SCIPSCONTROL_alias:COMPANY_ID = L_local_COMPANY_ID,
+         SCIPSCONTROL_alias:STATE      = L_local_STATE,
+         SCIPSCONTROL_alias:LOB_CODE   = P_LOB_CODE, Generic
+*/
+
+  if sfpmaster_alias:trans_code one of 10, 14 then
+    {
+      do process_invoice(p_policy_no,p_year,p_end_sequence,p_copy_name,p_policy_management_dec_copy)
+    }
+/*  else
+    if sfpname_alias:payor_change = 1 and
+       sfpmaster_alias:trans_code one of 12 then
+      {
+        do process_invoice(p_policy_no,p_year,p_end_sequence,p_copy_name,p_policy_management_dec_copy)
+      }
+   else
+    if sfpmaster_alias:trans_code one of 12 and
+       scipscontrol_alias:print_invoices_for_tc12 = 1 and
+       sfsline_alias:lob_code not one of "CPORTFOLIO" then
+      begin
+        if read_arsbilling(p_policy_no,p_year,p_end_sequence) one of "Y" then --ok to print invoice = "Y"
+          {
+            Do PROCESS_INVOICE(p_policy_no,p_year,p_end_sequence,p_copy_name,p_policy_management_dec_copy)
+          }
+      end
+  else
+    if sfpmaster_alias:trans_code one of 13 and
+--       scipscontrol_alias:print_invoices_for_tc13 = 1 and
+       sfsline_alias:lob_code not one of "CPORTFOLIO" then
+      {
+        do process_invoice(p_policy_no,p_year,p_end_sequence,p_copy_name,p_policy_management_dec_copy)
+      }
+  else
+    if sfpmaster_alias:trans_code one of 15 and
+--       scipscontrol_alias:print_invoices_for_tc15 = 1 and
+       sfsline_alias:lob_code not one of "CPORTFOLIO" then
+      {
+        do process_invoice(p_policy_no,p_year,p_end_sequence,p_copy_name,p_policy_management_dec_copy)
+      }
+  else
+    if sfpmaster_alias:trans_code one of 11 and
+       sfsline_alias:lob_code not one of "CPORTFOLIO" then
+      {
+        do process_cancellation_balance_due(p_policy_management_dec_copy, p_macro,p_policy_no)
+      }
+*/
+End
+
+Procedure PROCESS_INVOICE(number p_policy_no,
+                          number p_year,
+                          number p_end_sequence,
+                          string p_copy_name,
+                          string p_policy_management_dec_copy)
+
+Begin
+  string l_invoice[15];
+  string l_report[15];
+  string L_AR_COMMAND_LINE[55];
+  string L_APP[3]="sfs" ;
+  string l_enter[1];
+  proc("cli rm arsup930.pcl")/noconsole
+
+  access sfscompany_alias,
+     set sfscompany_alias:company_id = sfpname_alias:company_id, exact
+
+  Access SFPNAME,
+     Set SFPNAME_alias:POLICY_NO    = p_POLICY_NO,
+         SFPNAME_alias:POL_YEAR     = p_YEAR,
+         SFPNAME_alias:END_SEQUENCE = p_END_SEQUENCE, exact
+
+  Access SFPmaster,
+     Set SFPmaster_alias:POLICY_NO    = p_POLICY_NO,
+         SFPmaster_alias:POL_YEAR     = p_YEAR,
+         SFPmaster_alias:END_SEQUENCE = p_END_SEQUENCE, exact
+
+  L_REPORT = "arsup930"
+
+  if trim(P_COPY_NAME) = "Home Office" then   --home office copy so invoices know its the HOme office copy to image it.
+    {
+      L_AR_COMMAND_LINE = "2"+
+                          Str(SFPNAME_alias:EFF_DATE,"MMDDYYYY") +
+                          Str(SFPNAME_alias:EXP_DATE,"MMDDYYYY") +
+                          Str(SFPNAME_alias:POLICY_NO,"999999999") +
+                          "X" +                               -- g_scan
+                          "X" +                               -- image arrary position
+                          "00" + str(sfpmaster_alias:trans_code,"99") +
+                          "9999" +   --printer number
+                          "1" +    --number of copies to print to portal
+                          "3"
+    }
+  else
+    {
+      L_AR_COMMAND_LINE = "2"+
+                          Str(SFPNAME_alias:EFF_DATE,"MMDDYYYY") +
+                          Str(SFPNAME_alias:EXP_DATE,"MMDDYYYY") +
+                          Str(SFPNAME_alias:POLICY_NO,"999999999") +
+                          "X" +                               -- g_scan
+                          "X" +                               -- image arrary position
+                          "00" + str(sfpmaster_alias:trans_code,"99") +
+                          "9999" +   --printer number
+                          "1" +     --number of copies to print to portal
+                          "1"
+    }
+
+  write("%c<014>L_AR_COMMAND_LINE-->%x<--",01001,L_AR_COMMAND_LINE)
+  Read (23,1,"Press Enter to Continue ",L_ENTER,1)
+
+  If SFSCOMPANY_alias:DEBUG_MODE = 0 Then
+    Begin
+      Proc ("cli csbatch arsup930 %s",L_AR_COMMAND_LINE)/noconsole
+    End
+  Else
+    Begin
+      Proc ("cli csbatch arsup930 %s",L_AR_COMMAND_LINE)
+    End
+
+
+  closefile(p_policy_management_dec_copy)
+  closefile("arsup930.pcl")
+
+  write("%c<014>l_report-->%x<--",01001,l_report)
+  write("%cp_policy_management_dec_copy-->%x<--",02001,p_policy_management_dec_copy)
+
+  proc("cli ls -al")
+  proc("cli joinit %s %s.pcl<nl>",Trun(p_policy_management_dec_copy),trim(l_report))
+  proc("cli mv %s.pcl %s",trim(l_report),trun(p_policy_management_dec_copy))
+  Read (23,1,"Press Enter to Continue ",L_ENTER,1)
+
+--  proc("cli joinit %s.pcl %s<nl>",trim(l_report),Trun(p_policy_management_dec_copy))
+  closefile(p_policy_management_dec_copy)
+
+  write("%c<014>l_report-->%x<--",01001,l_report)
+  write("%cp_policy_management_dec_copy-->%x<--",02001,p_policy_management_dec_copy)
+  Read (23,1,"Press Enter to Continue ",L_ENTER,1)
+End
+
+string function read_arsbilling(number p_policy_no, number p_year, number p_end_sequence)
+
+begin
+  wdate l_eff_date,
+        l_exp_date;
+
+--  local file sfpprint1_alias = alias for sfpprint1;
+--  local file sfpname_alias = alias for sfpname;
+--  local file sfpmaster_alias = alias for sfpmaster;
+--  local file arsbilling_alias = alias for arsbilling;
+
+  unsigned ascii number l_trans_code[4];
+  string l_ok_to_print_invoice[1];
+
+  Access SFPNAME_alias,
+     Set SFPNAME_alias:POLICY_NO    = p_POLICY_NO,
+         SFPNAME_alias:POL_YEAR     = p_YEAR,
+         SFPNAME_alias:END_SEQUENCE = p_END_SEQUENCE, exact
+
+  Access SFPprint1_alias,
+     Set SFPprint1_alias:POLICY_NO    = p_POLICY_NO,
+         SFPprint1_alias:POL_YEAR     = p_YEAR,
+         SFPprint1_alias:END_SEQUENCE = p_END_SEQUENCE, exact
+
+  Access SFPmaster,
+     Set SFPmaster_alias:POLICY_NO    = p_POLICY_NO,
+         SFPmaster_alias:POL_YEAR     = p_YEAR,
+         SFPmaster_alias:END_SEQUENCE = p_END_SEQUENCE, exact
+
+  l_eff_date   = sfpmaster_alias:trans_eff
+  l_exp_date   = sfpmaster_alias:trans_exp
+  l_trans_code = sfpmaster_alias:trans_code
+
+  access arsbilling_alias,
+     set arsbilling_alias:company_id = sfpname_alias:company_id,
+         arsbilling_alias:policy_no  = sfpname_alias:policy_no,
+         arsbilling_alias:trans_date = sfpname_alias:trans_date,
+         arsbilling_alias:trans_eff  = l_eff_date,
+         arsbilling_alias:trans_exp  = l_exp_date,
+         arsbilling_alias:trans_code = l_trans_code, generic
+
+l_ok_to_print_invoice = "N"
+
+while arsbilling_alias:company_id = sfpname_alias:company_id and
+      arsbilling_alias:policy_no  = sfpname_alias:policy_no and
+      arsbilling_alias:trans_date = sfpname_alias:trans_date and
+      arsbilling_alias:trans_eff  = l_eff_date and
+      arsbilling_alias:trans_exp  = l_exp_date and
+      arsbilling_alias:trans_code = l_trans_code
+  begin
+    if arsbilling_alias:pol_year = sfpprint1_alias:pol_year and
+       arsbilling_alias:status = "B" then
+      begin
+        l_ok_to_print_invoice = "Y"
+      end
+
+    next arsbilling_alias
+  end
+  return l_ok_to_print_invoice
+end
+
+procedure process_cancellation_balance_due(string p_policy_management_dec_copy,
+                                           string p_macro,
+                                           number p_policy_no)
+
+begin
+  string L_cancellation_balance_due[15];
+  string L_CANCELLATION_STRING[28];
+  string g_que[10] = "visual";
+  string L_APP[3]="sfs" ;
+  Unsigned Ascii Number l_mm[2],
+                        l_dd[2],
+                        l_yy[4];
+
+--  local file sfscompany_alias = alias for sfscompany;
+
+--  L_cancellation_balance_due = L_APP + Trun(Str(p_CSEXEC_NUMBER)) + ".cq"
+  L_MM  = Month(sfpname_alias:trans_date)
+  L_DD  = Day(sfpname_alias:trans_date)
+  L_YY  = Year(sfpname_alias:trans_date)
+
+  L_CANCELLATION_STRING = "1" + Str(p_POLICY_NO,9) + Str(L_MM,2) +
+                        Str(L_DD,2) + Str(L_YY,4) + G_QUE
+
+
+  If SFSCOMPANY_alias:DEBUG_MODE = 0 Then
+    Begin
+      Proc("cli csbatch arsup920 %s",L_CANCELLATION_STRING)/noconsole
+--      Proc("cli joinit arsup920.pcl %s<nl>",Trun(L_cancellation_balance_due))/noconsole
+    end
+  else
+    Begin
+      Proc("cli csbatch arsup920 %s",L_CANCELLATION_STRING)
+--      Proc("cli joinit arsup920.pcl %s<nl>",Trun(L_cancellation_balance_due))
+    end
+  deletefile(p_macro)
+
+  Writefile(p_MACRO,"cli joinit %s %s<nl>","arsup920.pcl",Trun(p_policy_management_dec_copy))
+end
+
+number function get_numeric_state_from_abbreviation(number p_policy_no,number p_year,number p_end_sequence)
+
+BEGIN
+ unsigned ascii number l_local_state[2];
+ local file sfsline_local = alias for sfsline;
+ local file sfpname_local = alias for sfpname;
+ local file capvehicle_local = alias for capvehicle;
+ local file cppumbrella_local = alias for cppumbrella;
+ local file wcpgeneral_local = alias for wcpgeneral;
+ local file sfplocation_local = alias for sfplocation;
+
+ Access SFPNAME_local,
+    Set SFPNAME_local:POLICY_NO    = p_POLICY_NO,
+        SFPNAME_local:POL_YEAR     = p_YEAR,
+        SFPNAME_local:END_SEQUENCE = p_END_SEQUENCE, exact
+
+ access sfsline_local,
+    set sfsline_local:COMPANY_ID        = sfpname_local:company_id,
+        sfsline_local:line_of_business  = sfpname_local:line_of_business,
+        sfsline_local:LOB_SUBLINE       = "00", exact
+
+ if sfsline_local:lob_code one of "AUTO" then
+   {
+     access capvehicle_local,
+        set capvehicle_local:policy_no    = p_policy_no,
+            capvehicle_local:pol_year     = p_year,
+            capvehicle_local:end_sequence = p_end_sequence, generic
+
+     l_local_state = capvehicle_local:state
+   }
+ else
+   if sfsline_local:lob_code one of "WORK" then
+     {
+       access wcpgeneral_local,
+          set wcpgeneral_local:policy_no    = p_policy_no,
+              wcpgeneral_local:pol_year     = p_year,
+              wcpgeneral_local:end_sequence = p_end_sequence, generic
+       l_local_state = wcpgeneral_local:state
+     }
+   else
+     if sfsline_local:lob_code one of "UMBRELLA" then
+       {
+         access cppumbrella_local,
+            set cppumbrella_local:policy_no    = p_policy_no,
+                cppumbrella_local:pol_year     = p_year,
+                cppumbrella_local:end_sequence = p_end_sequence, generic
+         l_local_state = cppumbrella_local:state
+       }
+     else
+       {
+         access sfplocation_local,
+            set sfplocation_local:policy_no    = p_policy_no,
+                sfplocation_local:pol_year     = p_year,
+                sfplocation_local:end_sequence = p_end_sequence, generic
+
+         Switch(SFPLOCATION_local:STR_STATE)
+           Case 'AL' : l_local_state = 01
+           Case 'AK' : l_local_state = 54
+           Case 'AZ' : l_local_state = 02
+           Case 'AR' : l_local_state = 04
+           Case 'CA' : l_local_state = 04
+           Case 'CA' : l_local_state = 05
+           Case 'CO' : l_local_state = 05
+           Case 'CT' : l_local_state = 06
+           Case 'DE' : l_local_state = 07
+           Case 'DC' : l_local_state = 08
+           Case 'FL' : l_local_state = 09
+           Case 'GA' : l_local_state = 10
+           Case 'HI' : l_local_state = 52
+           Case 'ID' : l_local_state = 11
+           Case 'IL' : l_local_state = 12
+           Case 'IN' : l_local_state = 13
+           Case 'IA' : l_local_state = 14
+           Case 'KS' : l_local_state = 15
+           Case 'KY' : l_local_state = 16
+           Case 'LA' : l_local_state = 17
+           Case 'ME' : l_local_state = 18
+           Case 'MD' : l_local_state = 19
+           Case 'MA' : l_local_state = 20
+           Case 'MI' : l_local_state = 21
+           Case 'MN' : l_local_state = 22
+           Case 'MS' : l_local_state = 23
+           Case 'MO' : l_local_state = 24
+           Case 'MT' : l_local_state = 25
+           Case 'NE' : l_local_state = 26
+           Case 'NV' : l_local_state = 27
+           Case 'NH' : l_local_state = 28
+           Case 'NJ' : l_local_state = 29
+           Case 'NM' : l_local_state = 30
+           Case 'NY' : l_local_state = 31
+           Case 'NC' : l_local_state = 32
+           Case 'ND' : l_local_state = 33
+           Case 'OH' : l_local_state = 34
+           Case 'OK' : l_local_state = 35
+           Case 'OR' : l_local_state = 36
+           Case 'PA' : l_local_state = 37
+           Case 'RI' : l_local_state = 38
+           Case 'SC' : l_local_state = 39
+           Case 'SD' : l_local_state = 40
+           Case 'TN' : l_local_state = 41
+           Case 'TX' : l_local_state = 42
+           Case 'UT' : l_local_state = 43
+           Case 'VT' : l_local_state = 44
+           Case 'VI' : l_local_state = 50
+           Case 'VA' : l_local_state = 45
+           Case 'WA' : l_local_state = 46
+           Case 'WV' : l_local_state = 47
+           Case 'WI' : l_local_state = 48
+           Case 'WY' : l_local_state = 49
+         End
+       }
+  return l_local_state
+END
+
+END
